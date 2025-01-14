@@ -1,84 +1,136 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"gioui.org/app"
+	"gioui.org/layout"
+	"gioui.org/op"
+	"gioui.org/unit"
+	"gioui.org/widget"
+	"gioui.org/widget/material"
 	"github.com/bogem/id3v2/v2"
 )
 
-func main() {
-	argLength := len(os.Args[1:])
-	fmt.Printf("Arg length is %d\n", argLength)
-	if argLength == 0 {
-		fmt.Println("No arguments provided")
-		return
-	}
-	path := os.Args[1]
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		fmt.Println("Path given does not exist")
-	}
-	if !info.IsDir() {
-		fmt.Println("Path given is not a valid folder")
-	}
+type FileRename struct {
+	originalName string
+	newName      string
+}
 
-	dirEntries, err := os.ReadDir(path)
+type UI struct {
+	selectedFolder string
+	pattern        widget.Editor
+	selectButton   widget.Clickable
+	applyButton    widget.Clickable
+	files          []FileRename
+	list           layout.List
+}
+
+func main() {
+	go func() {
+		w := new(app.Window)
+		if err := loop(w); err != nil {
+			log.Fatal(err)
+		}
+		os.Exit(0)
+	}()
+	app.Main()
+}
+
+func loop(w *app.Window) error {
+	th := material.NewTheme()
+	var ops op.Ops
+	ui := &UI{
+		pattern: widget.Editor{SingleLine: true},
+		list:    layout.List{Axis: layout.Vertical},
+	}
+	ui.pattern.SetText("{bpm} {key} {artist} - {title}")
+	for {
+		switch e := w.Event().(type) {
+		case app.DestroyEvent:
+			return e.Err
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
+
+			if ui.selectButton.Clicked(gtx) {
+				// TODO: Implement folder selection dialog
+				ui.selectedFolder = "/path/to/folder"
+				ui.scanFiles()
+			}
+
+			if ui.applyButton.Clicked(gtx) && len(ui.files) > 0 {
+				ui.applyRenames()
+			}
+
+			layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return layout.Flex{}.Layout(gtx,
+						layout.Rigid(material.Button(th, &ui.selectButton, "Select Folder").Layout),
+						layout.Flexed(1, material.Editor(th, &ui.pattern, "Pattern").Layout),
+					)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					return ui.list.Layout(gtx, len(ui.files), func(gtx layout.Context, i int) layout.Dimensions {
+						return layout.Flex{}.Layout(gtx,
+							layout.Flexed(1, material.Label(th, unit.Sp(14), ui.files[i].originalName).Layout),
+							layout.Flexed(1, material.Label(th, unit.Sp(14), ui.files[i].newName).Layout),
+						)
+					})
+				}),
+				layout.Rigid(material.Button(th, &ui.applyButton, "Apply Changes").Layout),
+			)
+			e.Frame(gtx.Ops)
+		}
+	}
+}
+
+func (ui *UI) scanFiles() {
+	ui.files = nil
+	dirEntries, err := os.ReadDir(ui.selectedFolder)
 	if err != nil {
-		log.Fatal(err)
+		return
 	}
 
 	for _, dirEntry := range dirEntries {
-		if dirEntry.IsDir() {
-			continue
-		}
-		if filepath.Ext(dirEntry.Name()) != ".mp3" {
+		if dirEntry.IsDir() || filepath.Ext(dirEntry.Name()) != ".mp3" {
 			continue
 		}
 		fileName := dirEntry.Name()
-		fpath := filepath.Join(path, fileName)
+		fpath := filepath.Join(ui.selectedFolder, fileName)
 		m, err := id3v2.Open(fpath, id3v2.Options{Parse: true})
 		if err != nil {
-			log.Fatal("Error while opening mp3 file: ", err)
+			continue
 		}
 		defer m.Close()
 
-		//fmt.Println(fpath)
-		//fmt.Println(m.Artist(), ";", m.Title(), ";", m.Album())
-		//split := strings.Split(m.Title(), " - ")
-
-		bpm := m.GetTextFrame("TBPM").Text
-		key := m.GetTextFrame("TKEY").Text
-		song := m.GetTextFrame("TIT2").Text
-		if strings.Index(song, " - ") < 0 {
-			song = fmt.Sprintf("%s - %s", m.Artist(), m.Title())
-		} else if strings.Index(song, " - ") > 0 {
-			split := strings.Split(song, " - ")
-			artist := split[0]
-			title := split[1]
-			if artist != m.Artist() {
-				m.SetArtist(artist)
-			}
-			if title != m.Title() {
-				m.SetTitle(title)
-			}
-			m.Save()
-		}
-		//artist := split[0]
-		//title := split[1]
-		newName := fmt.Sprintf("%03s %03s %s.mp3", bpm, key, song)
-		newPath := filepath.Join(path, newName)
-		if newName == fileName {
-			continue
-		}
-		fmt.Println(newPath)
-		err = os.Rename(fpath, newPath)
-		if err != nil {
-			log.Fatal(err)
-		}
-
+		newName := ui.generateNewName(m)
+		ui.files = append(ui.files, FileRename{
+			originalName: fileName,
+			newName:      newName,
+		})
 	}
+}
+
+func (ui *UI) generateNewName(m *id3v2.Tag) string {
+	pattern := ui.pattern.Text()
+	name := pattern
+	name = strings.ReplaceAll(name, "{bpm}", m.GetTextFrame("TBPM").Text)
+	name = strings.ReplaceAll(name, "{key}", m.GetTextFrame("TKEY").Text)
+	name = strings.ReplaceAll(name, "{artist}", m.Artist())
+	name = strings.ReplaceAll(name, "{title}", m.Title())
+	return name + ".mp3"
+}
+
+func (ui *UI) applyRenames() {
+	for _, file := range ui.files {
+		oldPath := filepath.Join(ui.selectedFolder, file.originalName)
+		newPath := filepath.Join(ui.selectedFolder, file.newName)
+		if oldPath != newPath {
+			os.Rename(oldPath, newPath)
+		}
+	}
+	ui.scanFiles() // Refresh the list
 }
