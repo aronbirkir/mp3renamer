@@ -1,0 +1,19 @@
+# Claude Mind memory
+.claude/mind*
+
+# Build output
+dist/
+/mp3renamer
+/mp3rename
+*.exe
+*.app/
+*.syso
+
+# Go tooling
+*.test
+*.out
+coverage.*
+
+# OS clutter
+.DS_Store
+Thumbs.db
