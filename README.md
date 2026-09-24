@@ -4,6 +4,8 @@ A small desktop app that renames MP3 files based on their ID3 tags, for example
 turning `track01.mp3` into `123 04A Daft Punk - One More Time.mp3`. Built with
 [Gio](https://gioui.org).
 
+![MP3 Renamer previewing new names for an album](docs/screenshot.png)
+
 ## Using it
 
 1. **Choose a folder.** Click **Browse…** to pick a folder, or type a path and
