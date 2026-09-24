@@ -1,4 +1,4 @@
-module github.com/aronbirkir/mp3rename
+module github.com/aronbirkir/mp3renamer
 
 go 1.25.0
 
